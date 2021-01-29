@@ -32,6 +32,8 @@
 // Serial port 0 is still used by the Arduino bootloader regardless of this setting.
 #define SERIAL_PORT 0
 
+#define AT90USB
+
 // This determines the communication speed of the printer
 #define BAUDRATE 115200
 

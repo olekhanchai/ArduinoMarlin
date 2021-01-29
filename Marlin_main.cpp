@@ -34,17 +34,25 @@
 #include "language.h"
 #include "pins_arduino.h"
 #include "math.h"
+#include "SparkFun_SCD30_Arduino_Library.h"
+#include "ADS1115.h"
+#include "Adafruit_NeoPixel.h"
 
 #ifdef BLINKM
 #include "BlinkM.h"
 #include "Wire.h"
 #endif
 
+#include "LMP91000.h"
+#include "max6675.h"
+
 #if defined(DIGIPOTSS_PIN) && DIGIPOTSS_PIN > -1
 #include <SPI.h>
 #endif
 
 #define VERSION_STRING  "1.0.0"
+#define NEO_PIN        3
+#define NUMPIXELS 64
 
 int val = 0;  
 int incomingByte = 0;
@@ -56,6 +64,18 @@ String co2 = "";
 float humidVal = 0.0;
 float temperVal = 0.0;
 int co2Val = 0;
+
+ADS1115 adc0(ADS1115_DEFAULT_ADDRESS);
+double o2_gain = 0.43;
+double o2_opset = 0.0;
+
+
+int units = 0; // Units to readout temp (0 = ÀöF, 1 = ÀöC)
+float error = 0.0; // Temperature compensation error
+float temp_out = 0.0; // Temperature output varible
+
+MAX6675 temp0(SCK,SS,MISO);
+Adafruit_NeoPixel pixels(NUMPIXELS, NEO_PIN, NEO_GRB + NEO_KHZ800);
 
 // look here for descriptions of G-codes: http://linuxcnc.org/handbook/gcode/g-code.html
 // http://objects.reprap.org/wiki/Mendel_User_Manual:_RepRapGCodes
@@ -443,7 +463,7 @@ void setup()
   setup_killpin();
   setup_powerhold();
   MYSERIAL.begin(BAUDRATE);
-//  Serial1.begin(9600);
+  Serial1.begin(9600);
   SERIAL_PROTOCOLLNPGM("start");
   SERIAL_ECHO_START;
 
@@ -889,22 +909,22 @@ if(code_seen('M'))
     case 105 : // M105 
       #if defined(TEMP_0_PIN) && TEMP_0_PIN > -1
         SERIAL_PROTOCOLPGM("ok T:");
-        SERIAL_PROTOCOL_F(degHotend(tmp_extruder),1);
+        //SERIAL_PROTOCOL_F(degHotend(tmp_extruder),1);
         SERIAL_PROTOCOLPGM(" /");
-        SERIAL_PROTOCOL_F(degTargetHotend(tmp_extruder),1);
+        //SERIAL_PROTOCOL_F(degTargetHotend(tmp_extruder),1);
         #if defined(TEMP_BED_PIN) && TEMP_BED_PIN > -1
           SERIAL_PROTOCOLPGM(" B:");
-          SERIAL_PROTOCOL_F(degBed(),1);
+          //SERIAL_PROTOCOL_F(degBed(),1);
           SERIAL_PROTOCOLPGM(" /");
-          SERIAL_PROTOCOL_F(degTargetBed(),1);
+          //SERIAL_PROTOCOL_F(degTargetBed(),1);
         #endif //TEMP_BED_PIN
         for (int8_t cur_extruder = 0; cur_extruder < EXTRUDERS; ++cur_extruder) {
           SERIAL_PROTOCOLPGM(" T");
           SERIAL_PROTOCOL(cur_extruder);
           SERIAL_PROTOCOLPGM(":");
-          SERIAL_PROTOCOL_F(degHotend(cur_extruder),1);
+          //SERIAL_PROTOCOL_F(degHotend(cur_extruder),1);
           SERIAL_PROTOCOLPGM(" /");
-          SERIAL_PROTOCOL_F(degTargetHotend(cur_extruder),1);
+          //SERIAL_PROTOCOL_F(degTargetHotend(cur_extruder),1);
         }
       #else
         SERIAL_ERROR_START;
@@ -930,17 +950,17 @@ if(code_seen('M'))
         #ifdef SHOW_TEMP_ADC_VALUES
           #if defined(TEMP_BED_PIN) && TEMP_BED_PIN > -1
             SERIAL_PROTOCOLPGM("    ADC B:");
-            SERIAL_PROTOCOL_F(degBed(),1);
+            //SERIAL_PROTOCOL_F(degBed(),1);
             SERIAL_PROTOCOLPGM("C->");
-            SERIAL_PROTOCOL_F(rawBedTemp()/OVERSAMPLENR,0);
+            //SERIAL_PROTOCOL_F(rawBedTemp()/OVERSAMPLENR,0);
           #endif
           for (int8_t cur_extruder = 0; cur_extruder < EXTRUDERS; ++cur_extruder) {
             SERIAL_PROTOCOLPGM("  T");
             SERIAL_PROTOCOL(cur_extruder);
             SERIAL_PROTOCOLPGM(":");
-            SERIAL_PROTOCOL_F(degHotend(cur_extruder),1);
+            //SERIAL_PROTOCOL_F(degHotend(cur_extruder),1);
             SERIAL_PROTOCOLPGM("C->");
-            SERIAL_PROTOCOL_F(rawHotendTemp(cur_extruder)/OVERSAMPLENR,0);
+            //SERIAL_PROTOCOL_F(rawHotendTemp(cur_extruder)/OVERSAMPLENR,0);
           }
         #endif
 
@@ -1057,7 +1077,7 @@ if(code_seen('M'))
             SERIAL_PROTOCOLPGM(" E:");
             SERIAL_PROTOCOL((int)active_extruder);
             SERIAL_PROTOCOLPGM(" B:");
-            SERIAL_PROTOCOL_F(degBed(),1);
+            //SERIAL_PROTOCOL_F(degBed(),1);
             SERIAL_PROTOCOLLN("");
             codenum = millis();
           }
@@ -1132,56 +1152,213 @@ if(code_seen('M'))
       SERIAL_PROTOCOLLN((int)active_extruder);
     }
   }
-  else if(code_seen('Q'))
+  else if(code_seen('P'))
   {
     switch( (int)code_value() )
     {    
-      case 001:
+      case 10:
       {
-          //Serial1.print("G\r\n");
-//          Serial1.print("M 4164\r\n");
-//          Serial1.print("K 2\r\n");
-//          while(Serial1.available() > 0);
+          int relay[] = {A9,A5,40,A10,42,44,A11,A12};
+          int pin = 1;
+          int pin_status = 0;
+          if (code_seen('R')) pin = code_value() - 1;
+          if (pin < 0 || pin > 7 ) {SERIAL_PROTOCOLLN("Invalid relay value!");return;}
+          if (code_seen('S')) pin_status = code_value();
+          if (pin_status > 1) pin_status = 1;
+          pinMode(relay[pin], OUTPUT);
+          digitalWrite(relay[pin], pin_status);
       }
       break;
-      case 002:
+      case 20:
       {   
-//          Serial1.print("Q\r\n");
-//          while(Serial1.available() > 0) {
-//              incomingByte = Serial1.read();
-//              sprintf(buffers,"%c",incomingByte);            
-//              tempbuff += buffers;
-//          }
-          for (int i = 3; i < 10; i++)
-          {
-              humid += tempbuff[i];
-          }
-          for (int i = 10; i < 17; i++)
-          {
-              temper += tempbuff[i];
-          }
-          for (int i = 19; i < 26; i++)
-          {
-              co2 += tempbuff[i];
-          }
-          humidVal = humid.toFloat()/10;
-          temperVal = (temper.toFloat()-1000)/10;
-          co2Val = co2.toInt() * 10;
-          SERIAL_PROTOCOL("humid:");    
-          if (humidVal > 0) SERIAL_PROTOCOL(humidVal);
-          SERIAL_PROTOCOL(" ");
-          SERIAL_PROTOCOL("temp:");    
-          if (temperVal > 0) SERIAL_PROTOCOL(temperVal);
-          SERIAL_PROTOCOL(" ");  
-          SERIAL_PROTOCOL("co2:");    
-          if (co2Val > 0) SERIAL_PROTOCOL(co2Val);
-          SERIAL_PROTOCOL(" ");  
-          tempbuff = "";
-          humid = "";
-          temper = "";
-          co2 = "";    
-      }
-      break;
+
+        LMP91000 lmp91000;
+  
+        SERIAL_PROTOCOLPGM("LMP91000 Test");
+        Wire.begin();
+        
+        // initialize the slot select pins to "not selected"
+        pinMode(7, OUTPUT);  digitalWrite(7, LOW);
+        pinMode(9, OUTPUT);  digitalWrite(9, LOW);
+        pinMode(10, OUTPUT); digitalWrite(10, LOW);      
+        digitalWrite(9, HIGH); // select CO
+        
+        // settings for CO
+        uint8_t res = lmp91000.configure( 
+              LMP91000_TIA_GAIN_350K | LMP91000_RLOAD_10OHM,
+              LMP91000_REF_SOURCE_EXT | LMP91000_INT_Z_20PCT 
+                    | LMP91000_BIAS_SIGN_POS | LMP91000_BIAS_1PCT,
+              LMP91000_FET_SHORT_DISABLED | LMP91000_OP_MODE_AMPEROMETRIC                  
+        );
+              char buffer[20];
+              SERIAL_PROTOCOL("Config Result: ");
+              SERIAL_PROTOCOL("STATUS: ");
+              itoa(lmp91000.read(LMP91000_STATUS_REG), buffer, 16);
+              SERIAL_PROTOCOL(buffer);
+              SERIAL_PROTOCOL("-");
+              SERIAL_PROTOCOL(sizeof(buffer)/sizeof(buffer[0]));
+              SERIAL_PROTOCOL("TIACN: ");
+              itoa(lmp91000.read(LMP91000_TIACN_REG), buffer, 16);
+              SERIAL_PROTOCOL(buffer);
+              SERIAL_PROTOCOL("-");
+              SERIAL_PROTOCOL(sizeof(buffer)/sizeof(buffer[0]));      
+              SERIAL_PROTOCOL("REFCN: ");
+              itoa(lmp91000.read(LMP91000_REFCN_REG), buffer, 16);
+              SERIAL_PROTOCOL(buffer);
+              SERIAL_PROTOCOL("-");
+              SERIAL_PROTOCOL(sizeof(buffer)/sizeof(buffer[0]));
+              SERIAL_PROTOCOL("MODECN: ");
+              itoa(lmp91000.read(LMP91000_MODECN_REG), buffer, 16);  
+              SERIAL_PROTOCOL(buffer);
+              SERIAL_PROTOCOL("-");
+              SERIAL_PROTOCOL(sizeof(buffer)/sizeof(buffer[0]));     
+              SERIAL_PROTOCOLLN(" ");               
+        }
+        break;
+        case 30:
+        {
+            temp_out = temp0.readCelsius(); // Read the temp 5 times and return the average value to the var
+            SERIAL_PROTOCOL("T");
+            SERIAL_PROTOCOL(":");
+            SERIAL_PROTOCOL(temp_out);
+            SERIAL_PROTOCOLLN(" ");
+        };break;
+        case 40: 
+        {
+            SCD30 airSensor;
+            Wire.begin();
+       
+            if (airSensor.begin() == false)
+            {
+                  SERIAL_PROTOCOLLN("Air sensor not detected. Please check wiring. Freezing...");
+            }
+            
+            if (airSensor.dataAvailable()) {
+                  SERIAL_PROTOCOL("Z");
+                  SERIAL_PROTOCOL(":");
+                  SERIAL_PROTOCOL(airSensor.getCO2());
+                  SERIAL_PROTOCOL(" ");
+                  SERIAL_PROTOCOL("T");
+                  SERIAL_PROTOCOL(":");
+                  SERIAL_PROTOCOL(airSensor.getTemperature());
+                  SERIAL_PROTOCOL(" ");
+                  SERIAL_PROTOCOL("H");
+                  SERIAL_PROTOCOL(":");
+                  SERIAL_PROTOCOL(airSensor.getHumidity());
+                  SERIAL_PROTOCOLLN(" ");
+            }          
+        };break;
+        case 50:
+        {
+               Wire.begin();  // join I2C bus
+                adc0.initialize(); // initialize ADS1115 16 bit A/D chip
+            
+                if(!adc0.testConnection()) SERIAL_PROTOCOLLN("ADS1115 connection failed");
+                  
+                // To get output from this method, you'll need to turn on the 
+                //#define ADS1115_SERIAL_DEBUG // in the ADS1115.h file
+                adc0.showConfigRegister();
+                
+                // We're going to do continuous sampling
+                adc0.setMode(ADS1115_MODE_CONTINUOUS); 
+            
+                 // Set the gain (PGA) +/- 1.024v
+                adc0.setGain(ADS1115_PGA_2P048);   
+            
+                // The below method sets the mux and gets a reading.
+                int sensorOneCounts=adc0.getConversionP0N1();  // counts up to 16-bits  
+            
+                // To turn the counts into a voltage, we can use
+                SERIAL_PROTOCOL("V");
+                SERIAL_PROTOCOL(":");
+                SERIAL_PROTOCOL(sensorOneCounts*adc0.getMvPerCount());    
+                SERIAL_PROTOCOL(" ");      
+                SERIAL_PROTOCOL("O");
+                SERIAL_PROTOCOL(":");
+                SERIAL_PROTOCOL((sensorOneCounts*adc0.getMvPerCount()*o2_gain)+o2_opset);    
+                SERIAL_PROTOCOLLN(" ");          
+        };break;
+        case 60: 
+        {
+                  int red = 255;
+                  int green = 255;
+                  int blue = 255;
+                  int total = 64;
+                  if (code_seen('R')) red = code_value();
+                  if (code_seen('G')) green = code_value();
+                  if (code_seen('B')) blue = code_value();  
+                  if (code_seen('T')) total = code_value();  
+                
+                  if ( (red < 0 || red > 255 ) || (green < 0 || green > 255) || (blue < 0 || blue > 255 )) {SERIAL_PROTOCOLLN("Invalid color value!");return;}
+                
+                  pixels.begin();
+                  pixels.clear();
+           
+                  for(int i=0; i<total; i++) {
+                
+                    pixels.setPixelColor(i, pixels.Color(red, green, blue));
+                    pixels.show();
+                    delay(10);
+                  }        
+        };break;
+        case 70:
+        {
+            int incomingByte = 0;
+            char buffers[5];
+            char tempbuff[100]; 
+            char humid[10];
+            char temper[10];
+            char co2[10];
+            float humidVal = 0.0;
+            float temperVal = 0.0;
+            int co2Val = 0;     
+           
+            Serial1.print("Q\r\n");
+            strcpy(tempbuff, "");
+            while(Serial1.available() > 0) {
+                incomingByte = Serial1.read();
+                sprintf(buffers,"%c",incomingByte);
+                sprintf(tempbuff,"%s%s",tempbuff,buffers);  
+            }
+            char * pch;
+            pch = strtok (tempbuff," ");
+            int counter = 0;
+            while (pch != NULL)
+            {
+              sprintf (buffers,"%s\n",pch);   
+              if (counter == 1) {
+                strcpy(humid, buffers);
+                humidVal = (atof(humid)-0)/10.0;
+              } 
+              if (counter == 3) {
+                strcpy(temper, buffers);
+                temperVal = (atof(temper)-1000)/10.0;      
+              }
+              if (counter == 5) {
+                strcpy(co2, buffers);
+                co2Val = atoi(co2) * 10;
+              }
+              pch = strtok (NULL, " ");
+              counter++;
+            }
+            SERIAL_PROTOCOL("H");   
+            SERIAL_PROTOCOL(":");   
+            SERIAL_PROTOCOL(humidVal);
+            SERIAL_PROTOCOL(" ");
+            SERIAL_PROTOCOL("T");   
+            SERIAL_PROTOCOL(":");   
+            SERIAL_PROTOCOL(temperVal);
+            SERIAL_PROTOCOL(" ");
+            SERIAL_PROTOCOL("C");   
+            SERIAL_PROTOCOL(":");   
+            SERIAL_PROTOCOLLN(co2Val);
+            if (humidVal == 0 && temperVal == 0 && co2Val == 0) {
+              // if no valid value re-initial sensor.
+              Serial1.print("G\r\n");
+              Serial1.print("M 04164\r\n");
+              Serial1.print("K 2\r\n"); 
+            }                 
+        };break;
     }
   }
   else
@@ -1199,8 +1376,8 @@ void FlushSerialRequestResend()
 {
   //char cmdbuffer[bufindr][100]="Resend:";
   MYSERIAL.flush();
-  SERIAL_PROTOCOLPGM(MSG_RESEND);
-  SERIAL_PROTOCOLLN(gcode_LastN + 1);
+  //SERIAL_PROTOCOLPGM(MSG_RESEND);
+  //SERIAL_PROTOCOLLN(gcode_LastN + 1);
   ClearToSend();
 }
 
@@ -1327,7 +1504,7 @@ bool setTargetedHotend(int code){
         case 104:
           SERIAL_ECHO(MSG_M104_INVALID_EXTRUDER);
           break;
-        case 105:
+        case  
           SERIAL_ECHO(MSG_M105_INVALID_EXTRUDER);
           break;
         case 109:
