@@ -52,7 +52,7 @@
 #define E0_DIR_PIN          7
 #define E0_ENABLE_PIN      17
 
-#define HEATER_0_PIN       21  // Extruder
+#define HEATER_0_PIN       D11  // Extruder
 #define HEATER_1_PIN       -1
 #define HEATER_2_PIN       -1
 #define HEATER_BED_PIN     20  // Bed
@@ -63,7 +63,7 @@
 #define TEMP_0_PIN          1  // Extruder / Analog pin numbering
 #define TEMP_BED_PIN        0  // Bed / Analog pin numbering
 
-#define TEMP_1_PIN         -1
+#define TEMP_1_PIN         D11
 #define TEMP_2_PIN         -1
 
 #define SDPOWER            -1

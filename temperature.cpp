@@ -32,7 +32,9 @@
 #include "Marlin.h"
 #include "temperature.h"
 #include "watchdog.h"
+#include "max6675.h"
 
+static MAX6675 temp0(SCK,SS,MISO);
 
 //===========================================================================
 //=============================public variables============================
@@ -172,7 +174,7 @@ void PID_autotune(float temp, int extruder, int ncycles)
 {
   float input = 0.0;
   int cycles=0;
-  bool heating = true;
+  bool cooling = true;
 
   unsigned long temp_millis = millis();
   unsigned long t1=temp_millis;
@@ -224,7 +226,6 @@ void PID_autotune(float temp, int extruder, int ncycles)
       updateTemperaturesFromRawValues();
 
       input = (extruder<0)?current_temperature_bed:current_temperature[extruder];
-
       max=max(max,input);
       min=min(min,input);
 
@@ -237,9 +238,9 @@ void PID_autotune(float temp, int extruder, int ncycles)
       }
       #endif
 
-      if(heating == true && input > temp) {
+      if(cooling == true && input > temp) {
         if(millis() - t2 > 5000) { 
-          heating=false;
+          cooling=false;
           if (extruder<0)
             soft_pwm_bed = (bias - d) >> 1;
           else
@@ -249,9 +250,10 @@ void PID_autotune(float temp, int extruder, int ncycles)
           max=temp;
         }
       }
-      if(heating == false && input < temp) {
+
+      if(cooling == false && input > temp) {
         if(millis() - t1 > 5000) {
-          heating=true;
+          cooling=true;
           t2=millis();
           t_low=t2 - t1;
           if(cycles > 0) {
@@ -497,7 +499,7 @@ void manage_heater()
     #endif //PID_DEBUG
   #else /* PID off */
     pid_output = 0;
-    if(current_temperature[e] < target_temperature[e]) {
+    if(current_temperature[e] > target_temperature[e]) {
       pid_output = PID_MAX;
     }
   #endif
@@ -517,9 +519,9 @@ void manage_heater()
         if(degHotend(e) < watch_start_temp[e] + WATCH_TEMP_INCREASE)
         {
             setTargetHotend(0, e);
-            LCD_MESSAGEPGM("Heating failed");
+            LCD_MESSAGEPGM("Cooling failed");
             SERIAL_ECHO_START;
-            SERIAL_ECHOLN("Heating failed");
+            SERIAL_ECHOLN("Cooling failed");
         }else{
             watchmillis[e] = 0;
         }
@@ -745,7 +747,8 @@ static void updateTemperaturesFromRawValues()
 {
     for(uint8_t e=0;e<EXTRUDERS;e++)
     {
-        current_temperature[e] = analog2temp(current_temperature_raw[e], e);
+        //current_temperature[e] = analog2temp(current_temperature_raw[e], e);
+        current_temperature[e] = temp0.readCelsius();
     }
     current_temperature_bed = analog2tempBed(current_temperature_bed_raw);
     #ifdef TEMP_SENSOR_1_AS_REDUNDANT
@@ -1037,11 +1040,11 @@ void thermal_runaway_protection(int *state, unsigned long *timer, float temperat
     case 0: // "Heater Inactive" state
       if (target_temperature > 0) *state = 1;
       break;
-    case 1: // "First Heating" state
-      if (temperature >= target_temperature) *state = 2;
+    case 1: // "First Cooling" state
+      if (temperature <= target_temperature) *state = 2;
       break;
     case 2: // "Temperature Stable" state
-      if (temperature >= (target_temperature - hysteresis_degc))
+      if (temperature <= (target_temperature - hysteresis_degc))
       {
         *timer = millis();
       } 
@@ -1062,7 +1065,7 @@ void thermal_runaway_protection(int *state, unsigned long *timer, float temperat
           disable_e1();
           disable_e2();
           manage_heater();
-          lcd_update();
+          //lcd_update();
         }
       }
       break;

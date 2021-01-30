@@ -37,6 +37,8 @@
 #include "SparkFun_SCD30_Arduino_Library.h"
 #include "ADS1115.h"
 #include "Adafruit_NeoPixel.h"
+#include "max6675.h"
+#include <AutoPID.h>
 
 #ifdef BLINKM
 #include "BlinkM.h"
@@ -44,7 +46,6 @@
 #endif
 
 #include "LMP91000.h"
-#include "max6675.h"
 
 #if defined(DIGIPOTSS_PIN) && DIGIPOTSS_PIN > -1
 #include <SPI.h>
@@ -68,14 +69,28 @@ int co2Val = 0;
 ADS1115 adc0(ADS1115_DEFAULT_ADDRESS);
 double o2_gain = 0.43;
 double o2_opset = 0.0;
+extern MAX6675 temp0(SCK,SS,MISO);
 
+#define TEMP_READ_DELAY 800 //can only read digital temp sensor every ~750ms
+
+//pid settings and gains
+#define OUTPUT_MIN 0
+#define OUTPUT_MAX 255
+#define OUTPUT_PIN 11
+#define KP .12
+#define KI .0003
+#define KD 0
 
 int units = 0; // Units to readout temp (0 = ÀöF, 1 = ÀöC)
 float error = 0.0; // Temperature compensation error
 float temp_out = 0.0; // Temperature output varible
+double temperature, setPoint, outputVal;
 
-MAX6675 temp0(SCK,SS,MISO);
 Adafruit_NeoPixel pixels(NUMPIXELS, NEO_PIN, NEO_GRB + NEO_KHZ800);
+
+//input/output variables passed by reference, so they are updated automatically
+AutoPID myPID(&temperature, &setPoint, &outputVal, OUTPUT_MIN, OUTPUT_MAX, KP, KI, KD);
+
 
 // look here for descriptions of G-codes: http://linuxcnc.org/handbook/gcode/g-code.html
 // http://objects.reprap.org/wiki/Mendel_User_Manual:_RepRapGCodes
@@ -1136,7 +1151,7 @@ if(code_seen('M'))
     #endif //PIDTEMP
     case 303: // M303 PID autotune
     {
-      float temp = 150.0;
+      float temp = 20;
       int e=0;
       int c=5;
       if (code_seen('E')) e=code_value();
@@ -1156,63 +1171,39 @@ if(code_seen('M'))
   {
     switch( (int)code_value() )
     {    
-      case 10:
-      {
-          int relay[] = {A9,A5,40,A10,42,44,A11,A12};
-          int pin = 1;
-          int pin_status = 0;
-          if (code_seen('R')) pin = code_value() - 1;
-          if (pin < 0 || pin > 7 ) {SERIAL_PROTOCOLLN("Invalid relay value!");return;}
-          if (code_seen('S')) pin_status = code_value();
-          if (pin_status > 1) pin_status = 1;
-          pinMode(relay[pin], OUTPUT);
-          digitalWrite(relay[pin], pin_status);
-      }
-      break;
-      case 20:
-      {   
-
-        LMP91000 lmp91000;
-  
-        SERIAL_PROTOCOLPGM("LMP91000 Test");
-        Wire.begin();
-        
-        // initialize the slot select pins to "not selected"
-        pinMode(7, OUTPUT);  digitalWrite(7, LOW);
-        pinMode(9, OUTPUT);  digitalWrite(9, LOW);
-        pinMode(10, OUTPUT); digitalWrite(10, LOW);      
-        digitalWrite(9, HIGH); // select CO
-        
-        // settings for CO
-        uint8_t res = lmp91000.configure( 
-              LMP91000_TIA_GAIN_350K | LMP91000_RLOAD_10OHM,
-              LMP91000_REF_SOURCE_EXT | LMP91000_INT_Z_20PCT 
-                    | LMP91000_BIAS_SIGN_POS | LMP91000_BIAS_1PCT,
-              LMP91000_FET_SHORT_DISABLED | LMP91000_OP_MODE_AMPEROMETRIC                  
-        );
-              char buffer[20];
-              SERIAL_PROTOCOL("Config Result: ");
-              SERIAL_PROTOCOL("STATUS: ");
-              itoa(lmp91000.read(LMP91000_STATUS_REG), buffer, 16);
-              SERIAL_PROTOCOL(buffer);
-              SERIAL_PROTOCOL("-");
-              SERIAL_PROTOCOL(sizeof(buffer)/sizeof(buffer[0]));
-              SERIAL_PROTOCOL("TIACN: ");
-              itoa(lmp91000.read(LMP91000_TIACN_REG), buffer, 16);
-              SERIAL_PROTOCOL(buffer);
-              SERIAL_PROTOCOL("-");
-              SERIAL_PROTOCOL(sizeof(buffer)/sizeof(buffer[0]));      
-              SERIAL_PROTOCOL("REFCN: ");
-              itoa(lmp91000.read(LMP91000_REFCN_REG), buffer, 16);
-              SERIAL_PROTOCOL(buffer);
-              SERIAL_PROTOCOL("-");
-              SERIAL_PROTOCOL(sizeof(buffer)/sizeof(buffer[0]));
-              SERIAL_PROTOCOL("MODECN: ");
-              itoa(lmp91000.read(LMP91000_MODECN_REG), buffer, 16);  
-              SERIAL_PROTOCOL(buffer);
-              SERIAL_PROTOCOL("-");
-              SERIAL_PROTOCOL(sizeof(buffer)/sizeof(buffer[0]));     
-              SERIAL_PROTOCOLLN(" ");               
+        case 10:
+        {
+            int relay[] = {A9,A5,40,A10,42,44,A11,A12};
+            int pin = 1;
+            int pin_status = 0;
+            if (code_seen('R')) pin = code_value() - 1;
+            if (pin < 0 || pin > 7 ) {SERIAL_PROTOCOLLN("Invalid relay value!");return;}
+            if (code_seen('S')) pin_status = code_value();
+            if (pin_status > 1) pin_status = 1;
+            pinMode(relay[pin], OUTPUT);
+            digitalWrite(relay[pin], pin_status);
+        }
+        break;
+        case 20:
+        {   
+            myPID.setBangBang(2);
+            //set PID update interval to 2000ms
+            myPID.setTimeStep(2000);      
+            setPoint = 24;
+            pinMode(OUTPUT_PIN, OUTPUT);       
+            for (;;) {
+              temperature = temp0.readCelsius();
+              myPID.run();          
+              analogWrite(OUTPUT_PIN, 255-outputVal);        
+              myPID.atSetPoint(1); 
+              delay(500);   
+              SERIAL_PROTOCOL("T");
+              SERIAL_PROTOCOL(":");
+              SERIAL_PROTOCOL(temperature);
+              SERIAL_PROTOCOL("O:");              
+              SERIAL_PROTOCOLLN(255-outputVal);  
+            }
+                 
         }
         break;
         case 30:
@@ -1234,7 +1225,7 @@ if(code_seen('M'))
             }
             
             if (airSensor.dataAvailable()) {
-                  SERIAL_PROTOCOL("Z");
+                  SERIAL_PROTOCOL("C");
                   SERIAL_PROTOCOL(":");
                   SERIAL_PROTOCOL(airSensor.getCO2());
                   SERIAL_PROTOCOL(" ");
@@ -1495,31 +1486,31 @@ void setPwmFrequency(uint8_t pin, int val)
 }
 #endif //FAST_PWM_FAN
 bool setTargetedHotend(int code){
-  tmp_extruder = active_extruder;
-  if(code_seen('T')) {
-    tmp_extruder = code_value();
-    if(tmp_extruder >= EXTRUDERS) {
-      SERIAL_ECHO_START;
-      switch(code){
-        case 104:
-          SERIAL_ECHO(MSG_M104_INVALID_EXTRUDER);
-          break;
-        case  
-          SERIAL_ECHO(MSG_M105_INVALID_EXTRUDER);
-          break;
-        case 109:
-          SERIAL_ECHO(MSG_M109_INVALID_EXTRUDER);
-          break;
-        case 218:
-          SERIAL_ECHO(MSG_M218_INVALID_EXTRUDER);
-          break;
-        case 221:
-          SERIAL_ECHO(MSG_M221_INVALID_EXTRUDER);
-          break;
-      }
-      SERIAL_ECHOLN(tmp_extruder);
-      return true;
-    }
-  }
+//  tmp_extruder = active_extruder;
+//  if(code_seen('T')) {
+//    tmp_extruder = code_value();
+//    if(tmp_extruder >= EXTRUDERS) {
+//      SERIAL_ECHO_START;
+//      switch(code){
+//        case 104:
+//          SERIAL_ECHO(MSG_M104_INVALID_EXTRUDER);
+//          break;
+//        case  
+//          SERIAL_ECHO(MSG_M105_INVALID_EXTRUDER);
+//          break;
+//        case 109:
+//          SERIAL_ECHO(MSG_M109_INVALID_EXTRUDER);
+//          break;
+//        case 218:
+//          SERIAL_ECHO(MSG_M218_INVALID_EXTRUDER);
+//          break;
+//        case 221:
+//          SERIAL_ECHO(MSG_M221_INVALID_EXTRUDER);
+//          break;
+//      }
+//      SERIAL_ECHOLN(tmp_extruder);
+//      return true;
+//    }
+//  }
   return false;
 }
